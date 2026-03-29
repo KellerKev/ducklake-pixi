@@ -7,7 +7,7 @@ psql \
     -p "${POSTGRES_PORT:-5432}" \
     -U ducklake \
     -d ducklake_catalog \
-    -v guard.reader_password="$READER_PG_PASSWORD" \
+    -c "SET guard.reader_password = '${READER_PG_PASSWORD}';" \
     -f sql/create_reader.sql
 psql \
     -h "$POSTGRES_HOST" \

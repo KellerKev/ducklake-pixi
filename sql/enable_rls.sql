@@ -43,12 +43,12 @@ CREATE POLICY guard_reader_tables ON ducklake_table
               ON  acl.schema_name = s.schema_name
              AND  acl.table_name  = ducklake_table.table_name
              AND  acl.role_name   = current_user
-            WHERE s.schema_oid = ducklake_table.schema_oid
+            WHERE s.schema_id = ducklake_table.schema_id
         )
     );
 
 -- ── 3. Cascade RLS to dependent catalog tables ─────────────────────────────────
--- These tables reference table_oid; a reader with direct PG access could bypass
+-- These tables reference table_id; a reader with direct PG access could bypass
 -- the DuckLake layer and query them. RLS here blocks that.
 
 ALTER TABLE ducklake_column          ENABLE ROW LEVEL SECURITY;
@@ -59,12 +59,12 @@ DROP POLICY IF EXISTS guard_reader_columns    ON ducklake_column;
 DROP POLICY IF EXISTS guard_reader_data_files ON ducklake_data_file;
 DROP POLICY IF EXISTS guard_reader_stats      ON ducklake_table_stats;
 
--- Shared predicate: table_oid must be visible via the guarded ducklake_table
+-- Shared predicate: table_id must be visible via the guarded ducklake_table
 CREATE POLICY guard_reader_columns ON ducklake_column
     FOR SELECT TO ducklake_reader
-    USING (table_oid IN (
-        SELECT t.table_oid FROM ducklake_table t
-        JOIN   ducklake_schema s ON s.schema_oid = t.schema_oid
+    USING (table_id IN (
+        SELECT t.table_id FROM ducklake_table t
+        JOIN   ducklake_schema s ON s.schema_id = t.schema_id
         JOIN   ducklake_guard_acl acl
           ON   acl.schema_name = s.schema_name
          AND   acl.table_name  = t.table_name
@@ -73,9 +73,9 @@ CREATE POLICY guard_reader_columns ON ducklake_column
 
 CREATE POLICY guard_reader_data_files ON ducklake_data_file
     FOR SELECT TO ducklake_reader
-    USING (table_oid IN (
-        SELECT t.table_oid FROM ducklake_table t
-        JOIN   ducklake_schema s ON s.schema_oid = t.schema_oid
+    USING (table_id IN (
+        SELECT t.table_id FROM ducklake_table t
+        JOIN   ducklake_schema s ON s.schema_id = t.schema_id
         JOIN   ducklake_guard_acl acl
           ON   acl.schema_name = s.schema_name
          AND   acl.table_name  = t.table_name
@@ -84,9 +84,9 @@ CREATE POLICY guard_reader_data_files ON ducklake_data_file
 
 CREATE POLICY guard_reader_stats ON ducklake_table_stats
     FOR SELECT TO ducklake_reader
-    USING (table_oid IN (
-        SELECT t.table_oid FROM ducklake_table t
-        JOIN   ducklake_schema s ON s.schema_oid = t.schema_oid
+    USING (table_id IN (
+        SELECT t.table_id FROM ducklake_table t
+        JOIN   ducklake_schema s ON s.schema_id = t.schema_id
         JOIN   ducklake_guard_acl acl
           ON   acl.schema_name = s.schema_name
          AND   acl.table_name  = t.table_name

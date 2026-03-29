@@ -104,16 +104,16 @@ cmd = "python scripts/apply_s3_reader_policy.py"
 # Grant a table in the ACL
 # Usage: SCHEMA=tpch TABLE=customer pixi run guard-acl-grant
 [tasks.guard-acl-grant]
-cmd = "psql -h \"$POSTGRES_HOST\" -p \"${POSTGRES_PORT:-5432}\" -U ducklake -d ducklake_catalog -c \"INSERT INTO ducklake_guard_acl VALUES ('ducklake_reader','${SCHEMA:-main}','${TABLE}') ON CONFLICT DO NOTHING;\""
+cmd = "bash scripts/guard-acl.sh grant"
 
 # Revoke a table from the ACL
 # Usage: SCHEMA=tpch TABLE=customer pixi run guard-acl-revoke
 [tasks.guard-acl-revoke]
-cmd = "psql -h \"$POSTGRES_HOST\" -p \"${POSTGRES_PORT:-5432}\" -U ducklake -d ducklake_catalog -c \"DELETE FROM ducklake_guard_acl WHERE role_name='ducklake_reader' AND schema_name='${SCHEMA:-main}' AND table_name='${TABLE}';\""
+cmd = "bash scripts/guard-acl.sh revoke"
 
 # Show current ACL
 [tasks.guard-acl-show]
-cmd = "psql -h \"$POSTGRES_HOST\" -p \"${POSTGRES_PORT:-5432}\" -U ducklake -d ducklake_catalog -c \"SELECT role_name, schema_name, table_name FROM ducklake_guard_acl ORDER BY 1,2,3;\""
+cmd = "bash scripts/guard-acl.sh show"
 
 # Open a DuckDB session as the reader role (uses init-reader.sql)
 [tasks.reader-shell]

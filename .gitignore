@@ -1,0 +1,18 @@
+# Secrets — never commit
+.env.prod
+.env
+
+# Pixi runtime + local data
+.pixi/
+.ducklake/         # pgdata, minio binary, s3 data, logs, pids
+
+# DuckDB files
+*.db
+*.db.wal
+
+# Python
+__pycache__/
+*.pyc
+
+# macOS
+.DS_Store

@@ -1,0 +1,125 @@
+[project]
+name        = "ducklake"
+version     = "0.1.0"
+description = "DuckLake on Hetzner — PostgreSQL + S3 + DuckDB, zero Terraform"
+channels    = ["conda-forge"]
+platforms   = ["linux-64", "osx-arm64", "osx-64"]
+
+[activation]
+scripts = ["scripts/load-env.sh"]
+
+# ── Runtime dependencies ───────────────────────────────────────────────────────
+[dependencies]
+postgresql = ">=16"     # pg_ctl, initdb, psql, createdb
+duckdb-cli = ">=1.3"    # DuckDB CLI binary (ducklake needs >=1.3)
+python     = ">=3.11"
+curl       = "*"        # used by minio-install task
+
+[pypi-dependencies]
+boto3  = ">=1.34"       # bucket creation + S3 policy (guard)
+duckdb = ">=1.3"        # Python API — used by load_sample_data.py
+
+# ── PostgreSQL (runs on 5433 to avoid collisions with any system postgres) ─────
+
+[tasks.pg-init]
+cmd     = "mkdir -p .ducklake/pgdata && initdb -D .ducklake/pgdata -U ducklake --auth=trust --no-instructions"
+outputs = [".ducklake/pgdata/PG_VERSION"]
+
+[tasks.pg-start]
+cmd        = "pg_ctl -D .ducklake/pgdata -l .ducklake/pg.log -o '-h 127.0.0.1 -p 5433' start || true"
+depends-on = ["pg-init"]
+
+[tasks.pg-stop]
+cmd = "pg_ctl -D .ducklake/pgdata stop -m fast 2>/dev/null || true"
+
+[tasks.pg-createdb]
+cmd        = "createdb -h 127.0.0.1 -p 5433 -U ducklake ducklake_catalog 2>/dev/null || echo 'ducklake_catalog already exists'"
+depends-on = ["pg-start"]
+
+# ── MinIO (local S3 — single static binary, downloaded once) ──────────────────
+
+[tasks.minio-install]
+cmd     = "bash scripts/minio-install.sh"
+outputs = [".ducklake/bin/minio"]
+
+[tasks.minio-start]
+cmd        = "bash scripts/minio-start.sh"
+depends-on = ["minio-install"]
+
+[tasks.minio-stop]
+cmd = "bash scripts/minio-stop.sh"
+
+# ── Core: bucket + shell ───────────────────────────────────────────────────────
+
+[tasks.bucket-create]
+cmd = "python scripts/create_bucket.py"
+
+[tasks.shell]
+cmd = "bash scripts/shell.sh"
+
+[tasks.status]
+cmd = "bash scripts/status.sh"
+
+# ── Composite: local dev stack ─────────────────────────────────────────────────
+# cp .env.local .env && pixi run local-up && pixi run shell
+[tasks.local-up]
+depends-on = ["pg-start", "pg-createdb", "minio-start", "bucket-create"]
+
+[tasks.local-down]
+depends-on = ["minio-stop", "pg-stop"]
+
+# ── Composite: prod (Hetzner S3 + remote Postgres) ────────────────────────────
+# cp .env.prod .env && pixi run prod-up && pixi run shell
+[tasks.prod-up]
+cmd = "echo 'Ensuring Hetzner S3 bucket exists...' && python scripts/create_bucket.py && echo 'Ready. Run: pixi run shell'"
+
+# ══════════════════════════════════════════════════════════════════════════════
+# GUARD — optional access control layer (ducklake-guard)
+#
+# These tasks are independent of local-up / prod-up.
+# Run them AFTER the base stack is up and you have data loaded.
+#
+# Quick start (local):
+#   cp .env.local .env
+#   pixi run guard-load-sample           # load TPC-H data
+#   pixi run guard-pg-setup              # create reader role + RLS
+#   READER_SCHEMA=tpch READER_TABLE=customer pixi run guard-s3-policy
+#   pixi run guard-acl-grant SCHEMA=tpch TABLE=customer
+#   pixi run reader-shell                # verify
+# ══════════════════════════════════════════════════════════════════════════════
+
+# Load TPC-H sample data (sf=0.01) into DuckLake
+[tasks.guard-load-sample]
+cmd = "python scripts/load_sample_data.py"
+
+# Create ducklake_reader PG role + grant SELECT on catalog + enable RLS
+[tasks.guard-pg-setup]
+cmd = "bash scripts/guard-pg-setup.sh"
+
+# Apply S3 bucket policy restricting the reader key to a table prefix
+# Usage: READER_SCHEMA=tpch READER_TABLE=customer pixi run guard-s3-policy
+[tasks.guard-s3-policy]
+cmd = "python scripts/apply_s3_reader_policy.py"
+
+# Grant a table in the ACL
+# Usage: SCHEMA=tpch TABLE=customer pixi run guard-acl-grant
+[tasks.guard-acl-grant]
+cmd = "psql -h \"$POSTGRES_HOST\" -p \"${POSTGRES_PORT:-5432}\" -U ducklake -d ducklake_catalog -c \"INSERT INTO ducklake_guard_acl VALUES ('ducklake_reader','${SCHEMA:-main}','${TABLE}') ON CONFLICT DO NOTHING;\""
+
+# Revoke a table from the ACL
+# Usage: SCHEMA=tpch TABLE=customer pixi run guard-acl-revoke
+[tasks.guard-acl-revoke]
+cmd = "psql -h \"$POSTGRES_HOST\" -p \"${POSTGRES_PORT:-5432}\" -U ducklake -d ducklake_catalog -c \"DELETE FROM ducklake_guard_acl WHERE role_name='ducklake_reader' AND schema_name='${SCHEMA:-main}' AND table_name='${TABLE}';\""
+
+# Show current ACL
+[tasks.guard-acl-show]
+cmd = "psql -h \"$POSTGRES_HOST\" -p \"${POSTGRES_PORT:-5432}\" -U ducklake -d ducklake_catalog -c \"SELECT role_name, schema_name, table_name FROM ducklake_guard_acl ORDER BY 1,2,3;\""
+
+# Open a DuckDB session as the reader role (uses init-reader.sql)
+[tasks.reader-shell]
+cmd = "bash scripts/reader-shell.sh"
+
+# Composite: set up all guard layers in one shot
+# Usage: READER_SCHEMA=tpch READER_TABLE=customer pixi run guard-apply
+[tasks.guard-apply]
+depends-on = ["guard-pg-setup", "guard-s3-policy"]

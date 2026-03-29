@@ -1,0 +1,166 @@
+# DuckLake on Hetzner
+
+PostgreSQL catalog + Hetzner Object Storage (S3) + DuckDB query engine.
+**Zero Terraform.** Everything managed by [Pixi](https://pixi.sh).
+
+## What you get
+
+| Component | Local dev | Production |
+|-----------|-----------|------------|
+| S3 storage | MinIO (`:9000`) | Hetzner Object Storage |
+| Catalog DB | PostgreSQL (`:5433`) | PostgreSQL on any host |
+| Query engine | DuckDB CLI | DuckDB CLI |
+
+Cost estimate for production: **< €10/month** (cx33 VPS ~€5.50 + Object Storage ~€3.50/TB).
+
+---
+
+## Prerequisites
+
+- [Pixi](https://pixi.sh/latest/) — `curl -fsSL https://pixi.sh/install.sh | bash`
+- A Hetzner account (for production only)
+
+Everything else — DuckDB, PostgreSQL, MinIO — is installed by Pixi.
+
+```bash
+pixi install
+```
+
+---
+
+## Local Development
+
+### First-time setup
+
+```bash
+cp .env.local .env        # use local dev defaults
+pixi run local-up         # init PG, start MinIO, create bucket
+```
+
+### Open a DuckDB session
+
+```bash
+pixi run shell
+```
+
+```sql
+-- You're in DuckLake. Try it:
+CREATE TABLE flights AS
+    SELECT * FROM 'https://duckdb.org/data/flights.csv';
+
+SELECT origin, COUNT(*) AS flights
+FROM flights
+GROUP BY 1
+ORDER BY 2 DESC
+LIMIT 5;
+```
+
+### Subsequent sessions
+
+```bash
+pixi run local-up         # starts PG + MinIO if not running
+pixi run shell
+```
+
+### Stop services
+
+```bash
+pixi run local-down
+```
+
+---
+
+## Production (Hetzner)
+
+### 1. PostgreSQL
+
+Spin up any PostgreSQL instance — a Hetzner VPS, a managed provider, etc. Create a user and database:
+
+```sql
+CREATE USER ducklake WITH PASSWORD 'your-password';
+CREATE DATABASE ducklake_catalog OWNER ducklake;
+```
+
+### 2. Object Storage
+
+In the Hetzner Cloud Console: **Object Storage → Create bucket**.
+Then: **Object Storage → Manage keys** to get your access credentials.
+
+### 3. Configure `.env`
+
+```bash
+cp .env.prod.sample .env
+# Edit .env with your Hetzner credentials
+```
+
+### 4. One-time remote setup
+
+```bash
+pixi run prod-up          # creates the S3 bucket (idempotent)
+```
+
+### 5. Open a session
+
+```bash
+pixi run shell
+```
+
+---
+
+## Task reference
+
+| Task | Description |
+|------|-------------|
+| `pixi run local-up` | Start local PG + MinIO + create bucket |
+| `pixi run local-down` | Stop local PG + MinIO |
+| `pixi run shell` | DuckDB session (reads `.env`) |
+| `pixi run status` | Check if PG and MinIO are running |
+| `pixi run prod-up` | Create Hetzner S3 bucket (idempotent) |
+| `pixi run guard-load-sample` | Load TPC-H sample data |
+| `pixi run guard-pg-setup` | Create reader role + RLS |
+| `pixi run guard-s3-policy` | Restrict reader S3 access |
+| `pixi run reader-shell` | DuckDB session as reader |
+
+---
+
+## Project layout
+
+```
+pixi.toml          <- everything: deps + tasks
+init.sql           <- DuckDB S3 config (loaded by shell.sh)
+scripts/
+  load-env.sh      <- auto-loaded by Pixi activation; sources .env
+  shell.sh         <- builds ATTACH from env vars, launches DuckDB
+  reader-shell.sh  <- reader-role DuckDB session
+  minio-install.sh <- downloads MinIO binary
+  minio-start.sh   <- starts MinIO in background
+  minio-stop.sh    <- stops MinIO
+  create_bucket.py <- idempotent S3 bucket creation
+  load_sample_data.py <- TPC-H data loader
+  apply_s3_reader_policy.py <- S3 bucket policy for reader
+  guard-pg-setup.sh <- reader role + RLS setup
+sql/
+  create_reader.sql <- PostgreSQL reader role DDL
+  enable_rls.sql    <- Row Level Security policies
+  local.sql         <- standalone DuckDB init (local, no env vars)
+  prod.sql          <- standalone DuckDB init (prod, reads env vars)
+.env.local         <- local dev defaults (safe to commit)
+.env.sample        <- template for production .env
+.env.prod.sample   <- full production template with guard vars
+.ducklake/         <- local PG cluster + MinIO data (gitignored)
+```
+
+---
+
+## Switching from local to production
+
+The DuckLake catalog format is identical. You can `EXPORT DATABASE` from local and `IMPORT DATABASE` on production, or simply recreate your tables from source data on the production lake.
+
+---
+
+## Resources
+
+- [DuckLake docs](https://ducklake.select/)
+- [DuckDB S3 / httpfs](https://duckdb.org/docs/extensions/httpfs/s3api.html)
+- [Hetzner Object Storage](https://docs.hetzner.com/storage/object-storage/)
+- [Pixi docs](https://pixi.sh/latest/)

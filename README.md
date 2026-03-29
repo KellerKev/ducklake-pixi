@@ -110,6 +110,8 @@ pixi run shell
 
 ## Guard: Row-Level Access Control
 
+Based on [ducklake-guard](https://github.com/berndsen-io/ducklake-guard) by [berndsen-io](https://github.com/berndsen-io).
+
 DuckLake Guard adds a security layer on top of your data lake. It restricts which tables a reader can see using two mechanisms:
 
 - **PostgreSQL RLS** -- row-level security on the DuckLake catalog hides table metadata from unauthorized readers

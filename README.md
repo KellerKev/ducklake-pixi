@@ -1,7 +1,7 @@
 # DuckLake on Hetzner
 
 PostgreSQL catalog + Hetzner Object Storage (S3) + DuckDB query engine.
-**Zero Terraform.** Everything managed by [Pixi](https://pixi.sh).
+Everything managed by [Pixi](https://pixi.sh).
 
 ## What you get
 

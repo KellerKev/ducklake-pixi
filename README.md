@@ -10,6 +10,7 @@ Everything managed by [Pixi](https://pixi.sh).
 | S3 storage | MinIO (`:9000`) | Hetzner Object Storage |
 | Catalog DB | PostgreSQL (`:5433`) | PostgreSQL on any host |
 | Query engine | DuckDB CLI | DuckDB CLI |
+| Access control | RLS + S3 bucket policy | RLS + S3 bucket policy |
 
 Cost estimate for production: **< €10/month** (cx33 VPS ~€5.50 + Object Storage ~€3.50/TB).
 
@@ -83,8 +84,8 @@ CREATE DATABASE ducklake_catalog OWNER ducklake;
 
 ### 2. Object Storage
 
-In the Hetzner Cloud Console: **Object Storage → Create bucket**.
-Then: **Object Storage → Manage keys** to get your access credentials.
+In the Hetzner Cloud Console: **Object Storage -> Create bucket**.
+Then: **Object Storage -> Manage keys** to get your access credentials.
 
 ### 3. Configure `.env`
 
@@ -107,47 +108,103 @@ pixi run shell
 
 ---
 
+## Guard: Row-Level Access Control
+
+DuckLake Guard adds a security layer on top of your data lake. It restricts which tables a reader can see using two mechanisms:
+
+- **PostgreSQL RLS** -- row-level security on the DuckLake catalog hides table metadata from unauthorized readers
+- **S3 bucket policy** -- restricts the reader's S3 key to only the allowed table prefixes
+
+### Setup
+
+```bash
+# Load sample data (TPC-H, ~86K rows across 8 tables)
+pixi run guard-load-sample
+
+# Create the reader PG role + enable RLS policies
+pixi run guard-pg-setup
+
+# Grant access to specific tables
+SCHEMA=tpch TABLE=customer pixi run guard-acl-grant
+
+# Restrict the reader's S3 key to the granted table prefix
+READER_SCHEMA=tpch READER_TABLE=customer pixi run guard-s3-policy
+```
+
+### Verify
+
+```bash
+pixi run reader-shell
+```
+
+The reader can query `tpch.customer` but cannot see any other tables -- they don't even appear in the catalog.
+
+### Managing access
+
+```bash
+# Show current ACL
+pixi run guard-acl-show
+
+# Grant another table
+SCHEMA=tpch TABLE=orders pixi run guard-acl-grant
+
+# Revoke access
+SCHEMA=tpch TABLE=customer pixi run guard-acl-revoke
+
+# Apply both PG RLS + S3 policy in one shot
+READER_SCHEMA=tpch READER_TABLE=orders pixi run guard-apply
+```
+
+---
+
 ## Task reference
 
 | Task | Description |
 |------|-------------|
+| **Core** | |
 | `pixi run local-up` | Start local PG + MinIO + create bucket |
 | `pixi run local-down` | Stop local PG + MinIO |
 | `pixi run shell` | DuckDB session (reads `.env`) |
 | `pixi run status` | Check if PG and MinIO are running |
 | `pixi run prod-up` | Create Hetzner S3 bucket (idempotent) |
+| **Guard** | |
 | `pixi run guard-load-sample` | Load TPC-H sample data |
-| `pixi run guard-pg-setup` | Create reader role + RLS |
-| `pixi run guard-s3-policy` | Restrict reader S3 access |
-| `pixi run reader-shell` | DuckDB session as reader |
+| `pixi run guard-pg-setup` | Create reader role + RLS policies |
+| `pixi run guard-s3-policy` | Restrict reader S3 key to table prefix |
+| `pixi run guard-apply` | Run both `guard-pg-setup` + `guard-s3-policy` |
+| `pixi run guard-acl-grant` | Grant reader access to a table |
+| `pixi run guard-acl-revoke` | Revoke reader access to a table |
+| `pixi run guard-acl-show` | Show current ACL entries |
+| `pixi run reader-shell` | DuckDB session as restricted reader |
 
 ---
 
 ## Project layout
 
 ```
-pixi.toml          <- everything: deps + tasks
-init.sql           <- DuckDB S3 config (loaded by shell.sh)
+pixi.toml              <- deps + tasks
+init.sql               <- DuckDB S3 config (loaded by shell.sh)
 scripts/
-  load-env.sh      <- auto-loaded by Pixi activation; sources .env
-  shell.sh         <- builds ATTACH from env vars, launches DuckDB
-  reader-shell.sh  <- reader-role DuckDB session
-  minio-install.sh <- downloads MinIO binary
-  minio-start.sh   <- starts MinIO in background
-  minio-stop.sh    <- stops MinIO
-  create_bucket.py <- idempotent S3 bucket creation
-  load_sample_data.py <- TPC-H data loader
+  load-env.sh          <- auto-loaded by Pixi; sources .env
+  shell.sh             <- builds ATTACH from env vars, launches DuckDB
+  reader-shell.sh      <- reader-role DuckDB session
+  minio-install.sh     <- downloads MinIO binary
+  minio-start.sh       <- starts MinIO in background
+  minio-stop.sh        <- stops MinIO
+  guard-pg-setup.sh    <- reader role + RLS setup
+  guard-acl.sh         <- ACL grant/revoke/show helper
+  create_bucket.py     <- idempotent S3 bucket creation
+  load_sample_data.py  <- TPC-H data loader
   apply_s3_reader_policy.py <- S3 bucket policy for reader
-  guard-pg-setup.sh <- reader role + RLS setup
 sql/
-  create_reader.sql <- PostgreSQL reader role DDL
-  enable_rls.sql    <- Row Level Security policies
-  local.sql         <- standalone DuckDB init (local, no env vars)
-  prod.sql          <- standalone DuckDB init (prod, reads env vars)
-.env.local         <- local dev defaults (safe to commit)
-.env.sample        <- template for production .env
-.env.prod.sample   <- full production template with guard vars
-.ducklake/         <- local PG cluster + MinIO data (gitignored)
+  create_reader.sql    <- PostgreSQL reader role DDL
+  enable_rls.sql       <- Row Level Security policies
+  local.sql            <- standalone DuckDB init (local, hardcoded)
+  prod.sql             <- standalone DuckDB init (prod, reads env vars)
+.env.local             <- local dev defaults (safe to commit)
+.env.sample            <- template for production .env
+.env.prod.sample       <- full production template with guard vars
+.ducklake/             <- local PG + MinIO data (gitignored)
 ```
 
 ---
